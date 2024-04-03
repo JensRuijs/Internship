@@ -1,0 +1,1029 @@
+classdef Position_Force_steps_app < matlab.apps.AppBase
+
+    % Properties that correspond to app components
+    properties (Access = public)
+        UIFigure                        matlab.ui.Figure
+        Image                           matlab.ui.control.Image
+        ConnectButton                   matlab.ui.control.Button
+        DisconnectButton                matlab.ui.control.Button
+        MoveButtonNexact                matlab.ui.control.Button
+        ApproachmovementLabel           matlab.ui.control.Label
+        STOPButtonNexact                matlab.ui.control.Button
+        ForcePlotNexact                 matlab.ui.control.UIAxes
+        RESETButtonNexact               matlab.ui.control.Button
+        mmLabel                         matlab.ui.control.Label
+        mmsLabel_2                      matlab.ui.control.Label
+        ReadStepProfileButton           matlab.ui.control.Button
+        QuasistaticLabel                matlab.ui.control.Label
+        PositionPlot                    matlab.ui.control.UIAxes
+        umLabel_3                       matlab.ui.control.Label
+        umsLabel_2                      matlab.ui.control.Label
+        MoveLISAButton                  matlab.ui.control.Button
+        CycleloadLabel                  matlab.ui.control.Label
+        TestwaveButton                  matlab.ui.control.Button
+        Label                           matlab.ui.control.Label
+        umLabel_2                       matlab.ui.control.Label
+        HzLabel                         matlab.ui.control.Label
+        MakewaveButton                  matlab.ui.control.Button
+        PositionPlotNexact              matlab.ui.control.UIAxes
+        STOPButton                      matlab.ui.control.Button
+        RESETButton                     matlab.ui.control.Button
+        ForcePlot                       matlab.ui.control.UIAxes
+        ForcevsPositionPlot             matlab.ui.control.UIAxes
+        MessagesLabel                   matlab.ui.control.Label
+        MessagesTextArea                matlab.ui.control.TextArea
+        WorkingProcedureTextAreaLabel   matlab.ui.control.Label
+        WorkingProcedureTextArea        matlab.ui.control.TextArea
+        MaximadevicesTextAreaLabel      matlab.ui.control.Label
+        MaximadevicesTextArea           matlab.ui.control.TextArea
+        StageusedEditFieldLabel         matlab.ui.control.Label
+        StageusedEditField              matlab.ui.control.EditField
+        TypeofExperimentDropDownLabel   matlab.ui.control.Label
+        TypeofExperimentDropDown        matlab.ui.control.DropDown
+        ApproachdisplacementEditFieldLabel  matlab.ui.control.Label
+        ApproachdisplacementEditField   matlab.ui.control.NumericEditField
+        ApproachvelocityEditFieldLabel  matlab.ui.control.Label
+        ApproachvelocityEditField       matlab.ui.control.NumericEditField
+        VelocityEditFieldLabel          matlab.ui.control.Label
+        VelocityEditField               matlab.ui.control.NumericEditField
+        PositionEditFieldLabel          matlab.ui.control.Label
+        PositionEditField               matlab.ui.control.NumericEditField
+        NumberofcyclesEditFieldLabel    matlab.ui.control.Label
+        NumberofcyclesEditField         matlab.ui.control.NumericEditField
+        FrequencyEditFieldLabel         matlab.ui.control.Label
+        FrequencyEditField              matlab.ui.control.NumericEditField
+        AmplitudeEditFieldLabel         matlab.ui.control.Label
+        AmplitudeEditField              matlab.ui.control.NumericEditField
+    end
+
+    properties (Access = public) 
+% These variables can be accessed throughout the entire code and have to be called with app.variable
+        %% Connection
+        PIdevice 
+        Controller
+        axis
+        LC
+        DV
+        %% Movement
+        timeDataMatrix
+        forceDataMatrixLC
+        posDataMatrixPI
+        MoveCounter
+        timeDataMatrixNexact
+        forceDataMatrixLCNexact
+        posDataMatrixPINexact
+        MoveCounterNexact
+        errorPos
+        stepdata
+        lengthTable
+        %% Wave signal
+        WaveGenID
+        TotalCycles
+        %% Reset
+        RESETpressed
+        RESETNexactpressed
+    end
+
+    % Callbacks that handle component events
+    methods (Access = private)
+
+        % Callback function: ConnectButton, StageusedEditField
+        function ConnectButtonPushed(app, event)
+            app.MessagesTextArea.Value = 'The load cell and PI devices are being connected, connect the load cell in DigiVision';
+            % Setup configuration
+            axesSettings = app.StageusedEditField.Value;
+            switch axesSettings
+                case 'Nexact'
+                    app.axis = '1';
+                    controllerSerialNumber = '116047468';
+                case 'LISA'
+                    app.axis = 'X';
+                    controllerSerialNumber = '0116049748';
+            end
+            
+            % Load PI MATLAB Driver GCS2
+            isWindows = any(strcmp(mexext, {'mexw32', 'mexw64'}));
+            if(~isdeployed) % Determine whether code is running in deployed or MATLAB mode
+                if (isWindows)
+                    addpath(getenv('PI_MATLAB_DRIVER'));
+                else
+                    addpath('/usr/local/PI/pi_matlab_driver_gcs2');
+                end
+            end
+            if(~exist('Controller', 'var'))
+                app.Controller = PI_GCS_Controller();
+            end
+            if(~isa(app.Controller, 'PI_GCS_Controller'))
+                app.Controller = PI_GCS_Controller();
+            end
+        
+            % Start connection
+            if isempty(app.PIdevice) || ~app.PIdevice.IsConnected
+                app.PIdevice = app.Controller.ConnectUSB(controllerSerialNumber);
+            end
+        
+            % Check if PIdevice is successfully connected
+            if isempty(app.PIdevice) || ~app.PIdevice.IsConnected
+                app.MessagesTextArea.Value = 'Failed to connect to PI device';
+            end
+        
+            % Initialize PIdevice object for use in MATLAB
+            app.PIdevice = app.PIdevice.InitializeController();
+            
+            switchOn    = 1;
+            app.PIdevice.SVO ( app.axis, switchOn );
+            %Load cell
+            startTime = tic;
+            app.LC = serialport("COM13", 921600); % This is the port in which you put the load cell
+            app.DV = serialport("COM91", 921600); % This is the virtual port you made
+            %Comment the following loop if you have run the code once already
+            while toc(startTime) < 30
+                if app.LC.NumBytesAvailable > 0
+                    newData = read(app.LC, app.LC.NumBytesAvailable, "uint8");
+                    write(app.DV, newData, "uint8");
+                end
+                if app.DV.NumBytesAvailable > 0
+                    newDataProgram = read(app.DV, app.DV.NumBytesAvailable, "uint8");
+                    write(app.LC, newDataProgram, "uint8");
+                end
+            end
+            if app.PIdevice.IsConnected
+                app.MessagesTextArea.Value = 'The PI device and load cell are succesfully connected';
+            end
+        end
+
+        % Callback function: MoveLISAButton, PositionEditField
+        function MoveButtonPushed(app, event)
+            if ~isempty(app.PIdevice) % Check if PIdevice is assigned
+                Experiment = app.TypeofExperimentDropDown.Value;
+                switch Experiment
+                    case 'Quasi-static'
+                        app.PIdevice.CCL(1,'advanced')
+                        app.PIdevice.SPA(app.axis,117441280,0.01);
+                        app.RESETpressed = false;
+                        if isempty(app.timeDataMatrix)
+                            app.timeDataMatrix = [];
+                            app.forceDataMatrixLC = [];
+                            app.posDataMatrixPI = [];
+                            app.MoveCounter = 1;
+                        else
+                            lastTime = app.timeDataMatrix(end);
+                            app.MoveCounter = app.MoveCounter+1;
+                        end
+                        velocity = app.VelocityEditField.Value;
+                        position = app.PositionEditField.Value;
+                        
+                        initialTime = tic;
+                        app.PIdevice.VEL(app.axis, velocity);
+                        app.PIdevice.MOV(app.axis, position);
+                        while(1)
+                           app.MessagesTextArea.Value = 'The stage is moving';                     
+                           if app.LC.NumBytesAvailable > 0
+                               newDataLC = read(app.LC, app.LC.NumBytesAvailable, "uint8");
+                               x = app.PIdevice.qPOS(app.axis);
+                               if app.MoveCounter > 1
+                                   time = toc(initialTime)+lastTime;
+                               else
+                                   time = toc(initialTime);
+                               end
+                               write(app.DV, newDataLC, "uint8"); % Forward dataPI to the program
+                               
+                               % Check if the received dataPI contains multiple values
+                               if isnumeric(newDataLC) && numel(newDataLC) > 9 && numel(newDataLC) < 12
+                                   charForce = char(newDataLC);
+                                   strTrimForce = strtrim(string(charForce));
+                                   extractStrForce1 = extractAfter(strTrimForce, 1);
+                                   extractStrForce2 = extractBefore(extractStrForce1,8);
+                                   forceValue = str2double(extractStrForce2);
+                                   if forceValue < -1.45
+                                     app.PIdevice.MOV(app.axis,x-x/4)
+                                   end
+                                   
+                                   app.timeDataMatrix = [app.timeDataMatrix, time];
+                                   app.posDataMatrixPI = [app.posDataMatrixPI,x];
+                                   app.forceDataMatrixLC = [app.forceDataMatrixLC, forceValue];
+                           
+                                   plot(app.PositionPlot,app.timeDataMatrix,app.posDataMatrixPI);
+                                   drawnow;
+                                   plot(app.ForcePlot,app.timeDataMatrix,app.forceDataMatrixLC);
+                                   drawnow;
+                                   plot(app.ForcevsPositionPlot,app.posDataMatrixPI,app.forceDataMatrixLC)
+                                   drawnow;
+                                   if app.RESETpressed == false
+                                       QSsaving = [app.timeDataMatrix(end); app.posDataMatrixPI(end);app.forceDataMatrixLC(end)]';
+                                       writematrix(QSsaving,'QSLISA.txt','writeMode','append');
+                                   end
+                               end
+                           end
+                           if app.DV.NumBytesAvailable > 0
+                                newDataDV = read(app.DV, app.DV.NumBytesAvailable, "uint8");
+                                write(app.LC, newDataDV, "uint8");
+                           end
+                           if app.RESETpressed
+                               app.MessagesTextArea.Value = ['The LISA ended at ' num2str(app.posDataMatrixPI(end)) 'um and has been reset to 0'];
+                               app.PIdevice.MOV(app.axis,0)
+                               app.timeDataMatrix = []; 
+                               app.posDataMatrixPI = [];
+                               app.forceDataMatrixLC = [];
+                               app.MoveCounter = 1;
+                               cla(app.PositionPlot)
+                               cla(app.ForcePlot)
+                               cla(app.ForcevsPositionPlot)
+                               break
+                           end
+                        end
+                    case 'Cycle load'
+                        app.PIdevice.CCL(1,'advanced')
+                        app.PIdevice.SPA(app.axis,117441280,0.045);
+                        cyclesDone = 0;
+                        app.forceDataMatrixLC = [];
+                        initial_time = tic; 
+                        lastUpdate = initial_time;
+                        while(1)
+                            app.PIdevice.WGO(app.WaveGenID,1);
+                            while(0 ~= app.PIdevice.IsMoving () )
+                              pause(0.00001);
+                            end
+                            cyclesDone = cyclesDone + 1;
+                            if app.LC.NumBytesAvailable > 0
+                               newDataLC = read(app.LC, app.LC.NumBytesAvailable, "uint8");
+                               write(app.DV, newDataLC, "uint8"); % Forward dataPI to the program
+                               % Check if the received dataPI contains multiple values
+                               if isnumeric(newDataLC) && numel(newDataLC) > 9 && numel(newDataLC) < 12
+                                   charForce = char(newDataLC);
+                                   strTrimForce = strtrim(string(charForce));
+                                   extractStrForce1 = extractAfter(strTrimForce, 1);
+                                   extractStrForce2 = extractBefore(extractStrForce1,8);
+                                   forceValue = str2double(extractStrForce2);
+                                   app.forceDataMatrixLC = [app.forceDataMatrixLC, forceValue];
+                                   if forceValue < -0.05 && cyclesDone > 2 % CHANGE THIS WHEN ACTUALLY TESTING 
+                                       app.MessagesTextArea.Value = ['The sample broke, this happend after ' num2str(cyclesDone) ' cycles'];
+                                       app.PIdevice.WGO(app.WaveGenID,0);
+                                       break
+                                   end
+                               end
+                            end
+                            if app.DV.NumBytesAvailable > 0
+                                newDataDV = read(app.DV, app.DV.NumBytesAvailable, "uint8");
+                                write(app.LC, newDataDV, "uint8");
+                            end
+                            elapsedTime = toc(lastUpdate);
+                            if elapsedTime >= 1 
+                                app.MessagesTextArea.Value = ['Amount of cycles done = ' num2str(cyclesDone)];
+                                lastUpdate = tic;
+                            end
+                            if cyclesDone >= app.TotalCycles
+                                app.MessagesTextArea.Value = ['The cyclic test is done'];
+                                app.PIdevice.WGO(app.WaveGenID,0);
+                                break
+                            end   
+                        end
+                    case 'Step profile'
+                        app.PIdevice.CCL(1,'advanced')
+                        app.PIdevice.SPA(app.axis,117441280,0.01);
+                        app.RESETpressed = false;
+                        if isempty(app.timeDataMatrix)
+                            app.timeDataMatrix = [];
+                            app.forceDataMatrixLC = [];
+                            app.posDataMatrixPI = [];
+                            app.MoveCounter = 1;
+                        else
+                            lastTime = app.timeDataMatrix(end);
+                            app.MoveCounter = app.MoveCounter+1;
+                        end
+                        initialTime = tic;
+                        for i = 1:app.lengthTable
+                            timeStep = app.stepdata.Time(i);
+                            velocity = app.stepdata.Velocity(i);
+                            position = app.stepdata.Position(i);
+                            start_time = toc(initialTime);
+                            app.PIdevice.VEL(app.axis, velocity);
+                            app.PIdevice.MOV(app.axis, position);
+                            while (toc(initialTime) - start_time) < timeStep
+                               app.MessagesTextArea.Value = 'The stage is moving';                     
+                               if app.LC.NumBytesAvailable > 0
+                                   newDataLC = read(app.LC, app.LC.NumBytesAvailable, "uint8");
+                                   x = app.PIdevice.qPOS(app.axis);
+                                   if app.MoveCounter > 1
+                                       time = toc(initialTime)+lastTime;
+                                   else
+                                       time = toc(initialTime);
+                                   end
+                                   write(app.DV, newDataLC, "uint8"); % Forward dataPI to the program
+                                   
+                                   % Check if the received dataPI contains multiple values
+                                   if isnumeric(newDataLC) && numel(newDataLC) > 9 && numel(newDataLC) < 12
+                                       charForce = char(newDataLC);
+                                       strTrimForce = strtrim(string(charForce));
+                                       extractStrForce1 = extractAfter(strTrimForce, 1);
+                                       extractStrForce2 = extractBefore(extractStrForce1,8);
+                                       forceValue = str2double(extractStrForce2);
+                                       if forceValue < -1.45
+                                         app.PIdevice.MOV(app.axis,x-x/4)
+                                       end
+                                       
+                                       app.timeDataMatrix = [app.timeDataMatrix, time];
+                                       app.posDataMatrixPI = [app.posDataMatrixPI,x];
+                                       app.forceDataMatrixLC = [app.forceDataMatrixLC, forceValue];
+                               
+                                       plot(app.PositionPlot,app.timeDataMatrix,app.posDataMatrixPI);
+                                       drawnow;
+                                       plot(app.ForcePlot,app.timeDataMatrix,app.forceDataMatrixLC);
+                                       drawnow;
+                                       plot(app.ForcevsPositionPlot,app.posDataMatrixPI,app.forceDataMatrixLC)
+                                       drawnow;
+                                       if app.RESETpressed == false
+                                           QSsaving = [app.timeDataMatrix(end); app.posDataMatrixPI(end);app.forceDataMatrixLC(end)]';
+                                           writematrix(QSsaving,'QSLISA.txt','writeMode','append');
+                                       end
+                                   end
+                               end
+                               if app.DV.NumBytesAvailable > 0
+                                    newDataDV = read(app.DV, app.DV.NumBytesAvailable, "uint8");
+                                    write(app.LC, newDataDV, "uint8");
+                               end
+                               if app.RESETpressed
+                                   app.MessagesTextArea.Value = ['The LISA ended at ' num2str(app.posDataMatrixPI(end)) 'um and has been reset to 0'];
+                                   app.PIdevice.MOV(app.axis,0)
+                                   app.timeDataMatrix = []; 
+                                   app.posDataMatrixPI = [];
+                                   app.forceDataMatrixLC = [];
+                                   app.MoveCounter = 1;
+                                   cla(app.PositionPlot)
+                                   cla(app.ForcePlot)
+                                   break
+                               end
+                            end
+                        end
+                        while (1)
+                            app.MessagesTextArea.Value = 'The stage is moving';                     
+                               if app.LC.NumBytesAvailable > 0
+                                   newDataLC = read(app.LC, app.LC.NumBytesAvailable, "uint8");
+                                   x = app.PIdevice.qPOS(app.axis);
+                                   if app.MoveCounter > 1
+                                       time = toc(initialTime)+lastTime;
+                                   else
+                                       time = toc(initialTime);
+                                   end
+                                   write(app.DV, newDataLC, "uint8"); % Forward dataPI to the program
+                                   
+                                   % Check if the received dataPI contains multiple values
+                                   if isnumeric(newDataLC) && numel(newDataLC) > 9 && numel(newDataLC) < 12
+                                       charForce = char(newDataLC);
+                                       strTrimForce = strtrim(string(charForce));
+                                       extractStrForce1 = extractAfter(strTrimForce, 1);
+                                       extractStrForce2 = extractBefore(extractStrForce1,8);
+                                       forceValue = str2double(extractStrForce2);
+                                       if forceValue < -1.45
+                                         app.PIdevice.MOV(app.axis,x-x/4)
+                                       end
+                                       
+                                       app.timeDataMatrix = [app.timeDataMatrix, time];
+                                       app.posDataMatrixPI = [app.posDataMatrixPI,x];
+                                       app.forceDataMatrixLC = [app.forceDataMatrixLC, forceValue];
+                               
+                                       plot(app.PositionPlot,app.timeDataMatrix,app.posDataMatrixPI);
+                                       drawnow;
+                                       plot(app.ForcePlot,app.timeDataMatrix,app.forceDataMatrixLC);
+                                       drawnow;
+                                       if app.RESETpressed == false
+                                           QSsaving = [app.timeDataMatrix(end); app.posDataMatrixPI(end);app.forceDataMatrixLC(end)]';
+                                           writematrix(QSsaving,'QSLISA.txt','writeMode','append');
+                                       end
+                                   end
+                               end
+                               if app.DV.NumBytesAvailable > 0
+                                    newDataDV = read(app.DV, app.DV.NumBytesAvailable, "uint8");
+                                    write(app.LC, newDataDV, "uint8");
+                               end
+                               if app.RESETpressed
+                                   app.MessagesTextArea.Value = ['The LISA ended at ' num2str(app.posDataMatrixPI(end)) 'um and has been reset to 0'];
+                                   app.PIdevice.MOV(app.axis,0)
+                                   app.timeDataMatrix = []; 
+                                   app.posDataMatrixPI = [];
+                                   app.forceDataMatrixLC = [];
+                                   app.MoveCounter = 1;
+                                   cla(app.PositionPlot)
+                                   cla(app.ForcePlot)
+                                   break
+                               end
+                        end
+                end
+            else
+                % Handle the case where PIdevice is not assigned
+                app.MessagesTextArea.Value = 'PIdevice is not assigned';
+            end
+        end
+
+        % Button pushed function: DisconnectButton
+        function DisconnectButtonPushed(app, event)
+            if ~isempty(app.PIdevice) && app.PIdevice.IsConnected
+                % Close the connection
+                app.PIdevice.CloseConnection();
+                % Destroy the controller object
+                app.Controller.Destroy();
+                % Clear controller and PIdevice variables
+                clear app.Controller;
+                clear app.PIdevice;
+                app.MessagesTextArea.Value = 'The PI device is disconnected';
+            else
+                % Handle the case where PIdevice is not connected
+                app.MessagesTextArea.Value = 'PIdevice is not assigned';
+            end   
+        end
+
+        % Button pushed function: STOPButton
+        function STOPButtonPushed(app, event)
+            app.PIdevice.STP
+            stopPosition = app.PIdevice.qPOS(app.axis);
+            app.MessagesTextArea.Value = ['The LISA is stopped at ' num2str(stopPosition) 'um'];
+        end
+
+        % Button pushed function: MakewaveButton
+        function MakewaveButtonPushed(app, event)
+            app.MessagesTextArea.Value = 'The wave is being send to the device';
+            Frequency = app.FrequencyEditField.Value;
+            app.TotalCycles = app.NumberofcyclesEditField.Value;
+            Amplitude = app.AmplitudeEditField.Value + app.errorPos;
+            %% Wave parameters DONT CHANGE
+            app.WaveGenID = 1;
+            WaveTableID = 1;
+            Offset1stPoint = 0;
+            AppendWave = 0;
+            SegLength = 10000/Frequency;
+            WaveLength = SegLength;
+            CurveCenterPoint = WaveLength/2;
+            OffsetWave = 0;
+            
+            if SegLength > 1000
+                RecordRate = SegLength/1000;
+            else
+                RecordRate = 1;
+            end
+                       
+            app.PIdevice.VEL(app.axis,6333.52);
+            app.PIdevice.WCL(WaveTableID);
+            app.PIdevice.WAV_SIN_P(WaveTableID,Offset1stPoint,SegLength,AppendWave,CurveCenterPoint,Amplitude,OffsetWave,WaveLength); %Defining wave
+            app.PIdevice.RTR(RecordRate);
+            app.PIdevice.WGC(app.WaveGenID,1);
+            app.PIdevice.WSL(app.WaveGenID,WaveTableID);
+            app.MessagesTextArea.Value = 'Wave front is send to the device';
+        end
+
+        % Button pushed function: RESETButton
+        function RESETButtonPushed(app, event)
+            app.RESETpressed = true;
+        end
+
+        % Button pushed function: TestwaveButton
+        function TestwaveButtonPushed(app, event)
+            app.MessagesTextArea.Value = 'The wave is being send to the device';
+            Frequency = app.FrequencyEditField.Value;
+            Amplitude = app.AmplitudeEditField.Value;
+            %% Wave parameters DONT CHANGE
+            app.WaveGenID = 1;
+            WaveTableID = 1;
+            Offset1stPoint = 0;
+            AppendWave = 0;
+            SegLength = 10000/Frequency;
+            WaveLength = SegLength;
+            CurveCenterPoint = WaveLength/2;
+            OffsetWave = 0;
+            
+            if SegLength > 1000
+                RecordRate = SegLength/1000;
+                DataPoints = 1000;
+            else
+                RecordRate = 1;
+                DataPoints = SegLength;
+            end
+                       
+            app.PIdevice.VEL(app.axis,6333.52);
+            app.PIdevice.WCL(WaveTableID);
+            app.PIdevice.WAV_SIN_P(WaveTableID,Offset1stPoint,SegLength,AppendWave,CurveCenterPoint,Amplitude,OffsetWave,WaveLength); %Defining wave
+            app.PIdevice.RTR(RecordRate);
+            app.PIdevice.WGC(app.WaveGenID,1);
+            app.PIdevice.WSL(app.WaveGenID,WaveTableID);
+            for i=1:2
+                app.PIdevice.WGO(app.WaveGenID,1);
+                while(0 ~= app.PIdevice.IsMoving () )
+                  pause(0.00001);
+                end
+                cycle_data = app.PIdevice.qDRR(1,1,DataPoints);
+                plot(app.PositionPlot,cycle_data(:,1),cycle_data(:,2));
+                maxPos = max(cycle_data(:,2));
+            end
+            app.errorPos = Amplitude - maxPos;
+            app.MessagesTextArea.Value = ['Real amplitude = ' num2str(maxPos)];
+        end
+
+        % Callback function: ApproachdisplacementEditField, 
+        % MoveButtonNexact
+        function MoveButtonNexactPushed(app, event)
+             if ~isempty(app.PIdevice) % Check if PIdevice is assigned
+                app.RESETNexactpressed = false;
+                if isempty(app.timeDataMatrix)
+                    app.timeDataMatrixNexact = [];
+                    app.forceDataMatrixLCNexact = [];
+                    app.posDataMatrixPINexact = [];
+                    app.MoveCounterNexact = 1;
+                else
+                    lastTime = app.timeDataMatrixNexact(end);
+                    app.MoveCounterNexact = app.MoveCounterNexact+1;
+                end
+                velocity = app.ApproachvelocityEditField.Value;
+                position = app.ApproachdisplacementEditField.Value; 
+                app.PIdevice.VEL(app.axis, velocity);
+                
+                initialTime = tic;
+                app.PIdevice.MOV(app.axis, position);
+                while(1)
+                                     
+                   if app.LC.NumBytesAvailable > 0
+                       app.MessagesTextArea.Value = 'The stage is moving';   
+                       newDataLC = read(app.LC, app.LC.NumBytesAvailable, "uint8");
+                       x = app.PIdevice.qPOS(app.axis);
+                       if app.MoveCounter > 1
+                           time = toc(initialTime)+lastTime;
+                       else
+                           time = toc(initialTime);
+                       end
+                       write(app.DV, newDataLC, "uint8"); % Forward dataPI to the program
+                       
+                       % Check if the received dataPI contains multiple values
+                       if isnumeric(newDataLC) && numel(newDataLC) > 9 && numel(newDataLC) < 12
+                           charForce = char(newDataLC);
+                           strTrimForce = strtrim(string(charForce));
+                           extractStrForce1 = extractAfter(strTrimForce, 1);
+                           extractStrForce2 = extractBefore(extractStrForce1,8);
+                           forceValue = str2double(extractStrForce2);
+                           if forceValue < -0.05
+                             app.PIdevice.MOV(app.axis,x-0.001) % Moves back 1 microns 
+                           end
+                           
+                           app.timeDataMatrixNexact = [app.timeDataMatrixNexact, time];
+                           app.posDataMatrixPINexact = [app.posDataMatrixPINexact,x];
+                           app.forceDataMatrixLCNexact = [app.forceDataMatrixLCNexact, forceValue];
+                   
+                           plot(app.PositionPlotNexact,app.timeDataMatrixNexact,app.posDataMatrixPINexact);
+                           drawnow;
+                           plot(app.ForcePlotNexact,app.timeDataMatrixNexact,app.forceDataMatrixLCNexact);
+                           drawnow;
+                           if app.RESETNexactpressed == false
+                               QSsaving = [app.timeDataMatrixNexact(end); app.posDataMatrixPINexact(end);app.forceDataMatrixLCNexact(end)]';
+                               writematrix(QSsaving,'QSNexact.txt','writeMode','append');
+                           end
+                       end
+                   end
+                   if app.DV.NumBytesAvailable > 0
+                        newDataDV = read(app.DV, app.DV.NumBytesAvailable, "uint8");
+                        write(app.LC, newDataDV, "uint8");
+                   end
+                   if app.RESETNexactpressed
+                       app.MessagesTextArea.Value = ['The Nexact ended at ' num2str(app.posDataMatrixPINexact(end)) 'mm and has been reset to 0'];
+                       app.PIdevice.MOV(app.axis,0)
+                       app.timeDataMatrixNexact = []; 
+                       app.posDataMatrixPINexact = [];
+                       app.forceDataMatrixLCNexact = [];
+                       app.MoveCounterNexact = 1;
+                       cla(app.PositionPlotNexact)
+                       cla(app.ForcePlotNexact)
+                       break
+                   end
+                end
+            else
+                % Handle the case where PIdevice is not assigned
+                app.MessagesTextArea.Value = 'PIdevice is not assigned';
+            end
+        end
+
+        % Button pushed function: STOPButtonNexact
+        function STOPButtonNexactPushed(app, event)
+            app.PIdevice.STP
+            stopPosition = app.PIdevice.qPOS(app.axis);
+            app.MessagesTextArea.Value = ['The Nexact is stopped at ' num2str(stopPosition) 'mm'];
+        end
+
+        % Button pushed function: RESETButtonNexact
+        function RESETButtonNexactPushed(app, event)
+            app.RESETNexactpressed = true;
+            app.MessagesTextArea.Value = 'The test is reset to 0';
+        end
+
+        % Button pushed function: ReadStepProfileButton
+        function ReadStepProfileButtonPushed(app, event)
+            app.stepdata = readtable('steps.xlsx');
+            app.lengthTable = height(app.stepdata);
+            app.MessagesTextArea.Value = 'Step data is read';
+        end
+    end
+
+    % Component initialization
+    methods (Access = private)
+
+        % Create UIFigure and components
+        function createComponents(app)
+
+            % Create UIFigure and hide until all components are created
+            app.UIFigure = uifigure('Visible', 'off');
+            app.UIFigure.Position = [0 0 1536 845];
+            app.UIFigure.Name = 'MATLAB App';
+
+            % Create Image
+            app.Image = uiimage(app.UIFigure);
+            app.Image.HorizontalAlignment = 'right';
+            app.Image.Position = [1232 18 288 130];
+            app.Image.ImageSource = 'Polimi_logo.jpg';
+
+            % Create ConnectButton
+            app.ConnectButton = uibutton(app.UIFigure, 'push');
+            app.ConnectButton.ButtonPushedFcn = createCallbackFcn(app, @ConnectButtonPushed, true);
+            app.ConnectButton.BackgroundColor = [0.0588 0.8392 0.0588];
+            app.ConnectButton.FontSize = 14;
+            app.ConnectButton.FontWeight = 'bold';
+            app.ConnectButton.Position = [20 725 95 25];
+            app.ConnectButton.Text = 'Connect';
+
+            % Create DisconnectButton
+            app.DisconnectButton = uibutton(app.UIFigure, 'push');
+            app.DisconnectButton.ButtonPushedFcn = createCallbackFcn(app, @DisconnectButtonPushed, true);
+            app.DisconnectButton.BackgroundColor = [1 0 0];
+            app.DisconnectButton.FontSize = 14;
+            app.DisconnectButton.FontWeight = 'bold';
+            app.DisconnectButton.FontColor = [1 1 1];
+            app.DisconnectButton.Position = [139 725 93 25];
+            app.DisconnectButton.Text = 'Disconnect';
+
+            % Create MoveButtonNexact
+            app.MoveButtonNexact = uibutton(app.UIFigure, 'push');
+            app.MoveButtonNexact.ButtonPushedFcn = createCallbackFcn(app, @MoveButtonNexactPushed, true);
+            app.MoveButtonNexact.BackgroundColor = [0.0588 0.8392 0.0588];
+            app.MoveButtonNexact.FontSize = 14;
+            app.MoveButtonNexact.FontWeight = 'bold';
+            app.MoveButtonNexact.Position = [270 694 93 25];
+            app.MoveButtonNexact.Text = 'Move';
+
+            % Create ApproachmovementLabel
+            app.ApproachmovementLabel = uilabel(app.UIFigure);
+            app.ApproachmovementLabel.FontSize = 18;
+            app.ApproachmovementLabel.FontWeight = 'bold';
+            app.ApproachmovementLabel.Position = [335 810 184 22];
+            app.ApproachmovementLabel.Text = 'Approach movement';
+
+            % Create STOPButtonNexact
+            app.STOPButtonNexact = uibutton(app.UIFigure, 'push');
+            app.STOPButtonNexact.ButtonPushedFcn = createCallbackFcn(app, @STOPButtonNexactPushed, true);
+            app.STOPButtonNexact.BackgroundColor = [1 0 0];
+            app.STOPButtonNexact.FontSize = 14;
+            app.STOPButtonNexact.FontWeight = 'bold';
+            app.STOPButtonNexact.FontColor = [1 1 1];
+            app.STOPButtonNexact.Position = [381 694 93 25];
+            app.STOPButtonNexact.Text = 'STOP';
+
+            % Create ForcePlotNexact
+            app.ForcePlotNexact = uiaxes(app.UIFigure);
+            title(app.ForcePlotNexact, 'Force')
+            xlabel(app.ForcePlotNexact, 'Time [s]')
+            ylabel(app.ForcePlotNexact, 'Force [N]')
+            app.ForcePlotNexact.PlotBoxAspectRatio = [1.93827160493827 1 1];
+            app.ForcePlotNexact.Position = [13 148 387 274];
+
+            % Create RESETButtonNexact
+            app.RESETButtonNexact = uibutton(app.UIFigure, 'push');
+            app.RESETButtonNexact.ButtonPushedFcn = createCallbackFcn(app, @RESETButtonNexactPushed, true);
+            app.RESETButtonNexact.IconAlignment = 'right';
+            app.RESETButtonNexact.BackgroundColor = [1 0 0];
+            app.RESETButtonNexact.FontSize = 14;
+            app.RESETButtonNexact.FontWeight = 'bold';
+            app.RESETButtonNexact.FontColor = [1 1 1];
+            app.RESETButtonNexact.Position = [489 694 93 25];
+            app.RESETButtonNexact.Text = 'RESET';
+
+            % Create mmLabel
+            app.mmLabel = uilabel(app.UIFigure);
+            app.mmLabel.FontSize = 14;
+            app.mmLabel.Position = [561 742 36 22];
+            app.mmLabel.Text = '[mm]';
+
+            % Create mmsLabel_2
+            app.mmsLabel_2 = uilabel(app.UIFigure);
+            app.mmsLabel_2.FontSize = 14;
+            app.mmsLabel_2.Position = [561 779 48 22];
+            app.mmsLabel_2.Text = '[mm/s]';
+
+            % Create ReadStepProfileButton
+            app.ReadStepProfileButton = uibutton(app.UIFigure, 'push');
+            app.ReadStepProfileButton.ButtonPushedFcn = createCallbackFcn(app, @ReadStepProfileButtonPushed, true);
+            app.ReadStepProfileButton.BackgroundColor = [0.0588 0.8392 0.0588];
+            app.ReadStepProfileButton.FontSize = 14;
+            app.ReadStepProfileButton.FontWeight = 'bold';
+            app.ReadStepProfileButton.Position = [604 694 129 25];
+            app.ReadStepProfileButton.Text = 'Read step profile';
+
+            % Create QuasistaticLabel
+            app.QuasistaticLabel = uilabel(app.UIFigure);
+            app.QuasistaticLabel.FontSize = 18;
+            app.QuasistaticLabel.FontWeight = 'bold';
+            app.QuasistaticLabel.Position = [630 809 108 22];
+            app.QuasistaticLabel.Text = 'Quasi-static';
+
+            % Create PositionPlot
+            app.PositionPlot = uiaxes(app.UIFigure);
+            title(app.PositionPlot, 'Position LISA')
+            xlabel(app.PositionPlot, 'Time [s]')
+            ylabel(app.PositionPlot, 'Position [um]')
+            app.PositionPlot.PlotBoxAspectRatio = [1.93827160493827 1 1];
+            app.PositionPlot.Position = [418 408 387 274];
+
+            % Create umLabel_3
+            app.umLabel_3 = uilabel(app.UIFigure);
+            app.umLabel_3.FontSize = 14;
+            app.umLabel_3.Position = [785 742 33 22];
+            app.umLabel_3.Text = '[um]';
+
+            % Create umsLabel_2
+            app.umsLabel_2 = uilabel(app.UIFigure);
+            app.umsLabel_2.FontSize = 14;
+            app.umsLabel_2.Position = [784 779 50 22];
+            app.umsLabel_2.Text = '[um/s]';
+
+            % Create MoveLISAButton
+            app.MoveLISAButton = uibutton(app.UIFigure, 'push');
+            app.MoveLISAButton.ButtonPushedFcn = createCallbackFcn(app, @MoveButtonPushed, true);
+            app.MoveLISAButton.BackgroundColor = [0.0588 0.8392 0.0588];
+            app.MoveLISAButton.FontSize = 14;
+            app.MoveLISAButton.FontWeight = 'bold';
+            app.MoveLISAButton.Position = [804 672 93 25];
+            app.MoveLISAButton.Text = 'Move';
+
+            % Create CycleloadLabel
+            app.CycleloadLabel = uilabel(app.UIFigure);
+            app.CycleloadLabel.FontSize = 18;
+            app.CycleloadLabel.FontWeight = 'bold';
+            app.CycleloadLabel.Position = [852 809 94.99 22];
+            app.CycleloadLabel.Text = 'Cycle load';
+
+            % Create TestwaveButton
+            app.TestwaveButton = uibutton(app.UIFigure, 'push');
+            app.TestwaveButton.ButtonPushedFcn = createCallbackFcn(app, @TestwaveButtonPushed, true);
+            app.TestwaveButton.BackgroundColor = [0.0588 0.8392 0.0588];
+            app.TestwaveButton.FontSize = 14;
+            app.TestwaveButton.FontWeight = 'bold';
+            app.TestwaveButton.Position = [920 672 92.99 24.98];
+            app.TestwaveButton.Text = 'Test wave';
+
+            % Create Label
+            app.Label = uilabel(app.UIFigure);
+            app.Label.FontSize = 14;
+            app.Label.Position = [1040 710 25 22];
+            app.Label.Text = '[-]';
+
+            % Create umLabel_2
+            app.umLabel_2 = uilabel(app.UIFigure);
+            app.umLabel_2.FontSize = 14;
+            app.umLabel_2.Position = [1041 742 33 22];
+            app.umLabel_2.Text = '[um]';
+
+            % Create HzLabel
+            app.HzLabel = uilabel(app.UIFigure);
+            app.HzLabel.FontSize = 14;
+            app.HzLabel.Position = [1042 779 35 22];
+            app.HzLabel.Text = '[Hz]';
+
+            % Create MakewaveButton
+            app.MakewaveButton = uibutton(app.UIFigure, 'push');
+            app.MakewaveButton.ButtonPushedFcn = createCallbackFcn(app, @MakewaveButtonPushed, true);
+            app.MakewaveButton.BackgroundColor = [0.0588 0.8392 0.0588];
+            app.MakewaveButton.FontSize = 14;
+            app.MakewaveButton.FontWeight = 'bold';
+            app.MakewaveButton.Position = [1042 672 93 25];
+            app.MakewaveButton.Text = 'Make wave';
+
+            % Create PositionPlotNexact
+            app.PositionPlotNexact = uiaxes(app.UIFigure);
+            title(app.PositionPlotNexact, 'Position Nexact')
+            xlabel(app.PositionPlotNexact, 'Time [s]')
+            ylabel(app.PositionPlotNexact, 'Position [mm]')
+            app.PositionPlotNexact.PlotBoxAspectRatio = [1.93827160493827 1 1];
+            app.PositionPlotNexact.Position = [13 408 387 274];
+
+            % Create STOPButton
+            app.STOPButton = uibutton(app.UIFigure, 'push');
+            app.STOPButton.ButtonPushedFcn = createCallbackFcn(app, @STOPButtonPushed, true);
+            app.STOPButton.BackgroundColor = [1 0 0];
+            app.STOPButton.FontSize = 14;
+            app.STOPButton.FontWeight = 'bold';
+            app.STOPButton.FontColor = [1 1 1];
+            app.STOPButton.Position = [1087 767 93 25];
+            app.STOPButton.Text = 'STOP';
+
+            % Create RESETButton
+            app.RESETButton = uibutton(app.UIFigure, 'push');
+            app.RESETButton.ButtonPushedFcn = createCallbackFcn(app, @RESETButtonPushed, true);
+            app.RESETButton.BackgroundColor = [1 0 0];
+            app.RESETButton.FontSize = 14;
+            app.RESETButton.FontWeight = 'bold';
+            app.RESETButton.FontColor = [1 1 1];
+            app.RESETButton.Position = [1087 726 93 25];
+            app.RESETButton.Text = 'RESET';
+
+            % Create ForcePlot
+            app.ForcePlot = uiaxes(app.UIFigure);
+            title(app.ForcePlot, 'Force')
+            xlabel(app.ForcePlot, 'Time [s]')
+            ylabel(app.ForcePlot, 'Force [N]')
+            app.ForcePlot.PlotBoxAspectRatio = [1.93827160493827 1 1];
+            app.ForcePlot.Position = [419 148 387 274];
+
+            % Create ForcevsPositionPlot
+            app.ForcevsPositionPlot = uiaxes(app.UIFigure);
+            title(app.ForcevsPositionPlot, 'Force vs Displacement')
+            xlabel(app.ForcevsPositionPlot, 'Displacement [um]')
+            ylabel(app.ForcevsPositionPlot, 'Force [N]')
+            app.ForcevsPositionPlot.PlotBoxAspectRatio = [1.93827160493827 1 1];
+            app.ForcevsPositionPlot.Position = [805 287 387 274];
+
+            % Create MessagesLabel
+            app.MessagesLabel = uilabel(app.UIFigure);
+            app.MessagesLabel.HorizontalAlignment = 'right';
+            app.MessagesLabel.FontSize = 18;
+            app.MessagesLabel.FontWeight = 'bold';
+            app.MessagesLabel.Position = [676 122 91 22];
+            app.MessagesLabel.Text = 'Messages';
+
+            % Create MessagesTextArea
+            app.MessagesTextArea = uitextarea(app.UIFigure);
+            app.MessagesTextArea.FontSize = 14;
+            app.MessagesTextArea.Position = [520 60 403 59];
+
+            % Create WorkingProcedureTextAreaLabel
+            app.WorkingProcedureTextAreaLabel = uilabel(app.UIFigure);
+            app.WorkingProcedureTextAreaLabel.HorizontalAlignment = 'right';
+            app.WorkingProcedureTextAreaLabel.FontSize = 18;
+            app.WorkingProcedureTextAreaLabel.FontWeight = 'bold';
+            app.WorkingProcedureTextAreaLabel.Position = [1292 822 171 22];
+            app.WorkingProcedureTextAreaLabel.Text = 'Working Procedure';
+
+            % Create WorkingProcedureTextArea
+            app.WorkingProcedureTextArea = uitextarea(app.UIFigure);
+            app.WorkingProcedureTextArea.Position = [1215 130 322 689];
+            app.WorkingProcedureTextArea.Value = {'READ BEFORE USE'; ''; 'This is a summarized version of the user manual'; ''; 'Start-up'; '1. Start up PIMikroMove and DigiVision'; '2. In PIMikromove connect with both the PI stage controllers, do the AutoZero/referencing procedure, and make sure both servos are checked on, then close the program'; '3. In DigiVision make sure the LoadCell1.5N is present'; ''; 'Connecting'; '1. Choose the type of experiment that you want to perform'; '2. Press ''Connect'', once you have pressed this, you have 30 seconds to ''Find'' the device in DigiVision and press the ''Start measurement'' button'; '3. If you have done this in 30 seconds, you will receive a message that both the PI devices and the load cell have been connected'; ''; 'Approaching movement'; '(0. If you will do a cycle load, perform the first two steps of ''Cycle load test'')'; '1. Before inputting the parameters, first press ''Move'' once, to start the reading of the data to prevent delay'; '2. Input the wanted velocity and displacement of the Nexact and press move (put by default 0.1mm/s and 14.9mm)'; '3. Once the sample is touched, a spike will occur in the force plot and the stage will automatically move 1 um back'; ''; 'Quasi-static test'; '1. Before inputting the parameters, first press ''Move'' once, to start the reading of the data to prevent delay'; '2. Input the parameters for your test and press ''Move'''; '3. You can change the position at any time'; '4. If you are done with the test, rename the txt file that is saved, or else it will be overwritten'; ''; 'Cycle load test'; 'Go to step 3 if you have done the approach movement'; '1. Input your parameters, press ''Test wave'' and wait a bit'; '2. The wave that will be performed will be shown in the position LISA plot and the real amplitude will be given'; '3. Press ''Make wave'''; '2. Then press ''Move'''; '3. You can not change the wave until all cycles have been done'; '4. Do a quasi-static test to measure the force after all the cycles'; ''; 'Step profile'; '1. First make the step profile in Excel, input the time you want a movement to a certain position to take and with that calculate the velocity'; '2. If you want a constant position for a certain time, input the same position and velocity as the step before'; '3. Press ''Read step profile'' and then ''Move'''};
+
+            % Create MaximadevicesTextAreaLabel
+            app.MaximadevicesTextAreaLabel = uilabel(app.UIFigure);
+            app.MaximadevicesTextAreaLabel.HorizontalAlignment = 'right';
+            app.MaximadevicesTextAreaLabel.FontSize = 18;
+            app.MaximadevicesTextAreaLabel.FontWeight = 'bold';
+            app.MaximadevicesTextAreaLabel.Position = [179 126 143 22];
+            app.MaximadevicesTextAreaLabel.Text = 'Maxima devices';
+
+            % Create MaximadevicesTextArea
+            app.MaximadevicesTextArea = uitextarea(app.UIFigure);
+            app.MaximadevicesTextArea.FontSize = 14;
+            app.MaximadevicesTextArea.Position = [49 60 403 59];
+            app.MaximadevicesTextArea.Value = {'Displacement        LISA: 38 um                    Nexact: 26 mm'; 'Velocity                  LISA: -                            Nexact: 10 mm/s'; 'Load Cell: 1.5 N'};
+
+            % Create StageusedEditFieldLabel
+            app.StageusedEditFieldLabel = uilabel(app.UIFigure);
+            app.StageusedEditFieldLabel.HorizontalAlignment = 'right';
+            app.StageusedEditFieldLabel.FontSize = 14;
+            app.StageusedEditFieldLabel.Position = [40 810 88 22];
+            app.StageusedEditFieldLabel.Text = 'Stage used';
+
+            % Create StageusedEditField
+            app.StageusedEditField = uieditfield(app.UIFigure, 'text');
+            app.StageusedEditField.ValueChangedFcn = createCallbackFcn(app, @ConnectButtonPushed, true);
+            app.StageusedEditField.FontSize = 14;
+            app.StageusedEditField.Position = [143 810 100 22];
+            app.StageusedEditField.Value = 'LISA';
+
+            % Create TypeofExperimentDropDownLabel
+            app.TypeofExperimentDropDownLabel = uilabel(app.UIFigure);
+            app.TypeofExperimentDropDownLabel.HorizontalAlignment = 'right';
+            app.TypeofExperimentDropDownLabel.FontSize = 14;
+            app.TypeofExperimentDropDownLabel.Position = [1 769 126 22];
+            app.TypeofExperimentDropDownLabel.Text = 'Type of Experiment';
+
+            % Create TypeofExperimentDropDown
+            app.TypeofExperimentDropDown = uidropdown(app.UIFigure);
+            app.TypeofExperimentDropDown.Items = {'Quasi-static', 'Cycle load', 'Step profile'};
+            app.TypeofExperimentDropDown.FontSize = 14;
+            app.TypeofExperimentDropDown.Position = [142 769 118 22];
+            app.TypeofExperimentDropDown.Value = 'Quasi-static';
+
+            % Create ApproachdisplacementEditFieldLabel
+            app.ApproachdisplacementEditFieldLabel = uilabel(app.UIFigure);
+            app.ApproachdisplacementEditFieldLabel.HorizontalAlignment = 'right';
+            app.ApproachdisplacementEditFieldLabel.FontSize = 14;
+            app.ApproachdisplacementEditFieldLabel.Position = [284 742 151 22];
+            app.ApproachdisplacementEditFieldLabel.Text = 'Approach displacement';
+
+            % Create ApproachdisplacementEditField
+            app.ApproachdisplacementEditField = uieditfield(app.UIFigure, 'numeric');
+            app.ApproachdisplacementEditField.ValueChangedFcn = createCallbackFcn(app, @MoveButtonNexactPushed, true);
+            app.ApproachdisplacementEditField.FontSize = 14;
+            app.ApproachdisplacementEditField.Position = [450 742 100 22];
+
+            % Create ApproachvelocityEditFieldLabel
+            app.ApproachvelocityEditFieldLabel = uilabel(app.UIFigure);
+            app.ApproachvelocityEditFieldLabel.HorizontalAlignment = 'right';
+            app.ApproachvelocityEditFieldLabel.FontSize = 14;
+            app.ApproachvelocityEditFieldLabel.Position = [319 779 116 22];
+            app.ApproachvelocityEditFieldLabel.Text = 'Approach velocity';
+
+            % Create ApproachvelocityEditField
+            app.ApproachvelocityEditField = uieditfield(app.UIFigure, 'numeric');
+            app.ApproachvelocityEditField.FontSize = 14;
+            app.ApproachvelocityEditField.Position = [450 779 100 22];
+
+            % Create VelocityEditFieldLabel
+            app.VelocityEditFieldLabel = uilabel(app.UIFigure);
+            app.VelocityEditFieldLabel.HorizontalAlignment = 'right';
+            app.VelocityEditFieldLabel.FontSize = 14;
+            app.VelocityEditFieldLabel.Position = [625 779 53 22];
+            app.VelocityEditFieldLabel.Text = 'Velocity';
+
+            % Create VelocityEditField
+            app.VelocityEditField = uieditfield(app.UIFigure, 'numeric');
+            app.VelocityEditField.FontSize = 14;
+            app.VelocityEditField.Position = [693 779 73 22];
+
+            % Create PositionEditFieldLabel
+            app.PositionEditFieldLabel = uilabel(app.UIFigure);
+            app.PositionEditFieldLabel.HorizontalAlignment = 'right';
+            app.PositionEditFieldLabel.FontSize = 14;
+            app.PositionEditFieldLabel.Position = [622 742 56 22];
+            app.PositionEditFieldLabel.Text = 'Position';
+
+            % Create PositionEditField
+            app.PositionEditField = uieditfield(app.UIFigure, 'numeric');
+            app.PositionEditField.ValueChangedFcn = createCallbackFcn(app, @MoveButtonPushed, true);
+            app.PositionEditField.FontSize = 14;
+            app.PositionEditField.Position = [693 742 73 22];
+
+            % Create NumberofcyclesEditFieldLabel
+            app.NumberofcyclesEditFieldLabel = uilabel(app.UIFigure);
+            app.NumberofcyclesEditFieldLabel.HorizontalAlignment = 'right';
+            app.NumberofcyclesEditFieldLabel.FontSize = 14;
+            app.NumberofcyclesEditFieldLabel.Position = [801 710 113 22];
+            app.NumberofcyclesEditFieldLabel.Text = {'Number of cycles'; ''};
+
+            % Create NumberofcyclesEditField
+            app.NumberofcyclesEditField = uieditfield(app.UIFigure, 'numeric');
+            app.NumberofcyclesEditField.FontSize = 14;
+            app.NumberofcyclesEditField.Position = [929 710 73 22];
+
+            % Create FrequencyEditFieldLabel
+            app.FrequencyEditFieldLabel = uilabel(app.UIFigure);
+            app.FrequencyEditFieldLabel.HorizontalAlignment = 'right';
+            app.FrequencyEditFieldLabel.FontSize = 14;
+            app.FrequencyEditFieldLabel.Position = [842 779 72 22];
+            app.FrequencyEditFieldLabel.Text = 'Frequency';
+
+            % Create FrequencyEditField
+            app.FrequencyEditField = uieditfield(app.UIFigure, 'numeric');
+            app.FrequencyEditField.FontSize = 14;
+            app.FrequencyEditField.Position = [929 779 73 22];
+
+            % Create AmplitudeEditFieldLabel
+            app.AmplitudeEditFieldLabel = uilabel(app.UIFigure);
+            app.AmplitudeEditFieldLabel.HorizontalAlignment = 'right';
+            app.AmplitudeEditFieldLabel.FontSize = 14;
+            app.AmplitudeEditFieldLabel.Position = [846 742 68 22];
+            app.AmplitudeEditFieldLabel.Text = 'Amplitude';
+
+            % Create AmplitudeEditField
+            app.AmplitudeEditField = uieditfield(app.UIFigure, 'numeric');
+            app.AmplitudeEditField.FontSize = 14;
+            app.AmplitudeEditField.Position = [929 742 73 22];
+
+            % Show the figure after all components are created
+            app.UIFigure.Visible = 'on';
+        end
+    end
+
+    % App creation and deletion
+    methods (Access = public)
+
+        % Construct app
+        function app = Position_Force_steps_app
+
+            % Create UIFigure and components
+            createComponents(app)
+
+            % Register the app with App Designer
+            registerApp(app, app.UIFigure)
+
+            if nargout == 0
+                clear app
+            end
+        end
+
+        % Code that executes before app deletion
+        function delete(app)
+
+            % Delete UIFigure when app is deleted
+            delete(app.UIFigure)
+        end
+    end
+end
